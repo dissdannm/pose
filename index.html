@@ -1,0 +1,801 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
+  <title>人体姿态时序数据采集系统</title>
+  <style>
+    :root {
+      --bg: #0b1020;
+      --panel: #121933;
+      --panel-2: #1a2345;
+      --line: #2a376f;
+      --text: #eef3ff;
+      --muted: #9fb0e6;
+      --ok: #2ecc71;
+      --warn: #f1c40f;
+      --bad: #ff6b6b;
+      --accent: #4da3ff;
+      --accent-2: #7b61ff;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; background: var(--bg); color: var(--text); font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif; }
+    body { min-height: 100vh; }
+    .app { max-width: 1080px; margin: 0 auto; padding: 12px; display: grid; gap: 12px; }
+    .card { background: linear-gradient(180deg, var(--panel), var(--panel-2)); border: 1px solid var(--line); border-radius: 16px; padding: 14px; box-shadow: 0 10px 30px rgba(0,0,0,.22); }
+    h1, h2, h3, p { margin: 0; }
+    h1 { font-size: 20px; }
+    h2 { font-size: 16px; margin-bottom: 10px; }
+    .muted { color: var(--muted); }
+    .toolbar, .row, .grid { display: grid; gap: 10px; }
+    .toolbar { grid-template-columns: repeat(2, 1fr); }
+    .grid { grid-template-columns: 1fr; }
+    @media (min-width: 900px) {
+      .grid { grid-template-columns: 1.2fr 0.8fr; }
+      .toolbar { grid-template-columns: repeat(4, 1fr); }
+    }
+    label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 6px; }
+    input, select, button, textarea {
+      width: 100%; border-radius: 12px; border: 1px solid var(--line);
+      background: #0f1530; color: var(--text); padding: 12px; font-size: 14px; outline: none;
+    }
+    textarea { min-height: 88px; resize: vertical; }
+    button { cursor: pointer; font-weight: 700; transition: .15s ease; }
+    button:hover { transform: translateY(-1px); }
+    button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
+    .btn-primary { background: linear-gradient(90deg, var(--accent), var(--accent-2)); border: none; }
+    .btn-ok { background: #143b28; border-color: #245f41; }
+    .btn-warn { background: #3e320c; border-color: #7f6a17; }
+    .btn-bad { background: #431c1c; border-color: #7f2f2f; }
+    .stats { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
+    @media (min-width: 720px) { .stats { grid-template-columns: repeat(4, 1fr); } }
+    .stat { background: rgba(255,255,255,.03); border: 1px solid var(--line); border-radius: 12px; padding: 12px; }
+    .stat .k { color: var(--muted); font-size: 12px; margin-bottom: 6px; }
+    .stat .v { font-size: 18px; font-weight: 800; }
+    .stage {
+      position: relative; width: 100%; aspect-ratio: 9 / 16; max-height: 72vh;
+      background: #000; border-radius: 16px; overflow: hidden; border: 1px solid var(--line);
+    }
+    video, canvas {
+      position: absolute; inset: 0; width: 100%; height: 100%;
+      object-fit: cover; background: #000;
+    }
+    .status-line { display: flex; flex-wrap: wrap; gap: 8px; }
+    .pill {
+      display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line);
+      border-radius: 999px; padding: 6px 10px; font-size: 12px; color: var(--muted);
+      background: rgba(255,255,255,.03);
+    }
+    .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--warn); }
+    .ok .dot { background: var(--ok); }
+    .bad .dot { background: var(--bad); }
+    .warn .dot { background: var(--warn); }
+    .log {
+      max-height: 220px; overflow: auto; font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+      font-size: 12px; white-space: pre-wrap; line-height: 1.45; color: #dfe7ff;
+      background: rgba(0,0,0,.18); border: 1px solid var(--line); border-radius: 12px; padding: 10px;
+    }
+    .fileline { display: grid; grid-template-columns: 1fr; gap: 10px; }
+    @media (min-width: 900px) { .fileline { grid-template-columns: 1fr auto; align-items: end; } }
+    .tiny { font-size: 12px; color: var(--muted); }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <div class="card">
+      <h1>企业级人体姿态时序数据采集系统</h1>
+      <p class="muted" style="margin-top:8px;">纯前端 · 本地运行 · IndexedDB 持久化 · MediaPipe Pose Heavy</p>
+    </div>
+
+    <div class="grid">
+      <div class="card">
+        <h2>采集画面</h2>
+        <div class="stage">
+          <video id="video" playsinline muted></video>
+          <canvas id="overlay"></canvas>
+        </div>
+
+        <div class="status-line" style="margin-top:12px;">
+          <div class="pill" id="pillModel"><span class="dot"></span><span>模型未加载</span></div>
+          <div class="pill" id="pillCamera"><span class="dot"></span><span>摄像头未就绪</span></div>
+          <div class="pill" id="pillRecord"><span class="dot"></span><span>未采集</span></div>
+          <div class="pill" id="pillDb"><span class="dot"></span><span>数据库未初始化</span></div>
+        </div>
+
+        <div class="toolbar" style="margin-top:12px;">
+          <button id="btnInitModel" class="btn-primary">初始化本地 Heavy 模型</button>
+          <button id="btnCamera" class="btn-primary">打开摄像头</button>
+          <button id="btnStart" class="btn-ok" disabled>开始采集</button>
+          <button id="btnPause" class="btn-warn" disabled>暂停采集</button>
+          <button id="btnResume" class="btn-ok" disabled>继续采集</button>
+          <button id="btnStop" class="btn-bad" disabled>结束采集</button>
+          <button id="btnExportJsonl" disabled>导出 JSONL</button>
+          <button id="btnExportCsv" disabled>导出 CSV</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>会话配置</h2>
+
+        <div class="fileline">
+          <div>
+            <label>Heavy 模型文件（本地 .task）</label>
+            <input id="modelFile" type="file" accept=".task" />
+            <div class="tiny" style="margin-top:6px;">
+              在这里选择 <b>pose_landmarker_heavy.task</b>
+            </div>
+          </div>
+        </div>
+
+        <div class="row" style="margin-top:12px;">
+          <div>
+            <label>动作类型</label>
+            <select id="motionId">
+              <option value="sit_up">仰卧起坐</option>
+              <option value="pull_up">引体向上</option>
+              <option value="standing_long_jump">立定跳远</option>
+            </select>
+          </div>
+
+          <div>
+            <label>样本类型</label>
+            <select id="sampleType">
+              <option value="standard_sample">标准样本</option>
+              <option value="error_sample">错误样本</option>
+            </select>
+          </div>
+
+          <div>
+            <label>错误类型</label>
+            <input id="errorType" placeholder="如 neck_compensation / body_swing" />
+          </div>
+
+          <div>
+            <label>视角</label>
+            <select id="cameraView">
+              <option value="side">侧视</option>
+              <option value="front">正视</option>
+              <option value="diagonal">斜前方</option>
+            </select>
+          </div>
+
+          <div>
+            <label>环境</label>
+            <select id="environment">
+              <option value="indoor">室内</option>
+              <option value="outdoor">室外</option>
+            </select>
+          </div>
+
+          <div>
+            <label>采集人</label>
+            <input id="collectorName" placeholder="采集人姓名" />
+          </div>
+
+          <div>
+            <label>项目编号</label>
+            <input id="projectId" placeholder="项目编号" />
+          </div>
+
+          <div>
+            <label>样本编号</label>
+            <input id="sampleId" placeholder="样本编号" />
+          </div>
+
+          <div>
+            <label>备注</label>
+            <textarea id="notes" placeholder="备注"></textarea>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>实时状态</h2>
+      <div class="stats">
+        <div class="stat"><div class="k">采集状态</div><div class="v" id="statState">IDLE</div></div>
+        <div class="stat"><div class="k">已采集帧数</div><div class="v" id="statFrames">0</div></div>
+        <div class="stat"><div class="k">当前关键点数</div><div class="v" id="statLandmarks">0</div></div>
+        <div class="stat"><div class="k">异常帧数</div><div class="v" id="statAbnormal">0</div></div>
+        <div class="stat"><div class="k">采集时长(ms)</div><div class="v" id="statDuration">0</div></div>
+        <div class="stat"><div class="k">近似 FPS</div><div class="v" id="statFps">0</div></div>
+        <div class="stat"><div class="k">会话 UUID</div><div class="v tiny" id="statSessionId">-</div></div>
+        <div class="stat"><div class="k">本地会话数</div><div class="v" id="statSessions">0</div></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>运行日志</h2>
+      <div id="log" class="log"></div>
+    </div>
+  </div>
+
+  <script type="module">
+    import {
+      FilesetResolver,
+      PoseLandmarker
+    } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs";
+
+    const CONFIG = {
+      dbName: "pose_timeseries_db",
+      dbVersion: 1,
+      stores: {
+        sessions: "sessions",
+        frames: "frames"
+      },
+      video: {
+        width: { ideal: 1280 },
+        height: { ideal: 720 },
+        frameRate: { ideal: 30, max: 30 },
+        facingMode: { ideal: "environment" }
+      },
+      minPoseDetectionConfidence: 0.5,
+      minPosePresenceConfidence: 0.5,
+      minTrackingConfidence: 0.5,
+      abnormalVisibilityThreshold: 0.1
+    };
+
+    const LANDMARK_NAMES = [
+      "nose","left_eye_inner","left_eye","left_eye_outer","right_eye_inner","right_eye","right_eye_outer",
+      "left_ear","right_ear","mouth_left","mouth_right","left_shoulder","right_shoulder","left_elbow",
+      "right_elbow","left_wrist","right_wrist","left_pinky","right_pinky","left_index","right_index",
+      "left_thumb","right_thumb","left_hip","right_hip","left_knee","right_knee","left_ankle","right_ankle",
+      "left_heel","right_heel","left_foot_index","right_foot_index"
+    ];
+
+    const BONES = [
+      [11,13],[13,15],[12,14],[14,16],[11,12],[11,23],[12,24],[23,24],
+      [23,25],[25,27],[24,26],[26,28],[27,29],[29,31],[28,30],[30,32]
+    ];
+
+    const els = {
+      video: document.getElementById("video"),
+      overlay: document.getElementById("overlay"),
+      modelFile: document.getElementById("modelFile"),
+      btnInitModel: document.getElementById("btnInitModel"),
+      btnCamera: document.getElementById("btnCamera"),
+      btnStart: document.getElementById("btnStart"),
+      btnPause: document.getElementById("btnPause"),
+      btnResume: document.getElementById("btnResume"),
+      btnStop: document.getElementById("btnStop"),
+      btnExportJsonl: document.getElementById("btnExportJsonl"),
+      btnExportCsv: document.getElementById("btnExportCsv"),
+      motionId: document.getElementById("motionId"),
+      sampleType: document.getElementById("sampleType"),
+      errorType: document.getElementById("errorType"),
+      cameraView: document.getElementById("cameraView"),
+      environment: document.getElementById("environment"),
+      collectorName: document.getElementById("collectorName"),
+      projectId: document.getElementById("projectId"),
+      sampleId: document.getElementById("sampleId"),
+      notes: document.getElementById("notes"),
+      statState: document.getElementById("statState"),
+      statFrames: document.getElementById("statFrames"),
+      statLandmarks: document.getElementById("statLandmarks"),
+      statAbnormal: document.getElementById("statAbnormal"),
+      statDuration: document.getElementById("statDuration"),
+      statFps: document.getElementById("statFps"),
+      statSessionId: document.getElementById("statSessionId"),
+      statSessions: document.getElementById("statSessions"),
+      log: document.getElementById("log"),
+      pillModel: document.getElementById("pillModel"),
+      pillCamera: document.getElementById("pillCamera"),
+      pillRecord: document.getElementById("pillRecord"),
+      pillDb: document.getElementById("pillDb")
+    };
+
+    const state = {
+      db: null,
+      poseLandmarker: null,
+      videoStream: null,
+      modelReady: false,
+      cameraReady: false,
+      currentState: "IDLE",
+      sessionId: null,
+      sessionStartedAt: null,
+      sessionPausedAt: null,
+      pauseAccumulatedMs: 0,
+      frameIndex: 0,
+      abnormalFrames: 0,
+      lastVideoTime: -1,
+      rafId: null,
+      fpsCounter: 0,
+      currentFps: 0,
+      lastFpsTick: performance.now()
+    };
+
+    function log(message, level = "INFO") {
+      const line = `[${new Date().toLocaleTimeString()}][${level}] ${message}`;
+      els.log.textContent = line + "\n" + els.log.textContent;
+      console[level === "ERROR" ? "error" : "log"](line);
+    }
+
+    function setPill(el, text, mode) {
+      el.className = `pill ${mode || ""}`;
+      el.innerHTML = `<span class="dot"></span><span>${text}</span>`;
+    }
+
+    function setStateText() {
+      els.statState.textContent = state.currentState;
+      const map = {
+        IDLE: ["未采集", "warn"],
+        READY: ["可开始采集", "ok"],
+        RECORDING: ["采集中", "ok"],
+        PAUSED: ["已暂停", "warn"],
+        STOPPED: ["已结束", "bad"]
+      };
+      const [text, cls] = map[state.currentState] || [state.currentState, "warn"];
+      setPill(els.pillRecord, text, cls);
+    }
+
+    function updateButtons() {
+      const ready = state.modelReady && state.cameraReady;
+      els.btnStart.disabled = !ready || state.currentState === "RECORDING";
+      els.btnPause.disabled = state.currentState !== "RECORDING";
+      els.btnResume.disabled = state.currentState !== "PAUSED";
+      els.btnStop.disabled = !(state.currentState === "RECORDING" || state.currentState === "PAUSED");
+      els.btnExportJsonl.disabled = !state.sessionId;
+      els.btnExportCsv.disabled = !state.sessionId;
+    }
+
+    function updateStats() {
+      els.statFrames.textContent = String(state.frameIndex);
+      els.statAbnormal.textContent = String(state.abnormalFrames);
+      els.statFps.textContent = String(state.currentFps);
+      els.statSessionId.textContent = state.sessionId || "-";
+
+      let duration = 0;
+      if (state.sessionStartedAt) {
+        const now = performance.now();
+        if (state.currentState === "PAUSED" && state.sessionPausedAt != null) {
+          duration = state.sessionPausedAt - state.sessionStartedAt - state.pauseAccumulatedMs;
+        } else {
+          duration = now - state.sessionStartedAt - state.pauseAccumulatedMs;
+        }
+      }
+      els.statDuration.textContent = Math.max(0, Math.floor(duration)).toString();
+    }
+
+    function uuid() {
+      return crypto.randomUUID ? crypto.randomUUID() : `session_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+    }
+
+    async function openDb() {
+      return await new Promise((resolve, reject) => {
+        const req = indexedDB.open(CONFIG.dbName, CONFIG.dbVersion);
+        req.onupgradeneeded = () => {
+          const db = req.result;
+          if (!db.objectStoreNames.contains(CONFIG.stores.sessions)) {
+            db.createObjectStore(CONFIG.stores.sessions, { keyPath: "sessionId" });
+          }
+          if (!db.objectStoreNames.contains(CONFIG.stores.frames)) {
+            const store = db.createObjectStore(CONFIG.stores.frames, { keyPath: "id", autoIncrement: true });
+            store.createIndex("by_session", "sessionId", { unique: false });
+          }
+        };
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error);
+      });
+    }
+
+    async function dbPut(storeName, value) {
+      return await new Promise((resolve, reject) => {
+        const tx = state.db.transaction(storeName, "readwrite");
+        tx.objectStore(storeName).put(value);
+        tx.oncomplete = () => resolve(true);
+        tx.onerror = () => reject(tx.error);
+      });
+    }
+
+    async function dbAdd(storeName, value) {
+      return await new Promise((resolve, reject) => {
+        const tx = state.db.transaction(storeName, "readwrite");
+        tx.objectStore(storeName).add(value);
+        tx.oncomplete = () => resolve(true);
+        tx.onerror = () => reject(tx.error);
+      });
+    }
+
+    async function dbGetAllBySession(sessionId) {
+      return await new Promise((resolve, reject) => {
+        const tx = state.db.transaction(CONFIG.stores.frames, "readonly");
+        const idx = tx.objectStore(CONFIG.stores.frames).index("by_session");
+        const req = idx.getAll(IDBKeyRange.only(sessionId));
+        req.onsuccess = () => resolve(req.result || []);
+        req.onerror = () => reject(req.error);
+      });
+    }
+
+    async function dbCountSessions() {
+      return await new Promise((resolve, reject) => {
+        const tx = state.db.transaction(CONFIG.stores.sessions, "readonly");
+        const req = tx.objectStore(CONFIG.stores.sessions).count();
+        req.onsuccess = () => resolve(req.result || 0);
+        req.onerror = () => reject(req.error);
+      });
+    }
+
+    async function initDb() {
+      state.db = await openDb();
+      els.statSessions.textContent = String(await dbCountSessions());
+      setPill(els.pillDb, "数据库已初始化", "ok");
+      log("IndexedDB 初始化完成");
+    }
+
+    function resizeCanvas() {
+      const rect = els.video.getBoundingClientRect();
+      const dpr = window.devicePixelRatio || 1;
+      els.overlay.width = Math.floor(rect.width * dpr);
+      els.overlay.height = Math.floor(rect.height * dpr);
+      els.overlay.style.width = `${rect.width}px`;
+      els.overlay.style.height = `${rect.height}px`;
+      const ctx = els.overlay.getContext("2d");
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    }
+
+    function drawSkeleton(result) {
+      const ctx = els.overlay.getContext("2d");
+      const width = els.overlay.clientWidth;
+      const height = els.overlay.clientHeight;
+      ctx.clearRect(0, 0, width, height);
+
+      const landmarks = result?.landmarks?.[0] || [];
+      els.statLandmarks.textContent = String(landmarks.length);
+      if (!landmarks.length) return;
+
+      ctx.strokeStyle = "#7b61ff";
+      ctx.lineWidth = 2;
+      for (const [a, b] of BONES) {
+        const p1 = landmarks[a], p2 = landmarks[b];
+        if (!p1 || !p2) continue;
+        ctx.beginPath();
+        ctx.moveTo(p1.x * width, p1.y * height);
+        ctx.lineTo(p2.x * width, p2.y * height);
+        ctx.stroke();
+      }
+
+      ctx.fillStyle = "#4da3ff";
+      for (const p of landmarks) {
+        ctx.beginPath();
+        ctx.arc(p.x * width, p.y * height, 3, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+
+    async function initModelFromLocalFile() {
+      const file = els.modelFile.files?.[0];
+      if (!file) {
+        alert("请先选择 pose_landmarker_heavy.task");
+        return;
+      }
+
+      const buffer = await file.arrayBuffer();
+      const modelAssetBuffer = new Uint8Array(buffer);
+
+      const vision = await FilesetResolver.forVisionTasks(
+        "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm"
+      );
+
+      state.poseLandmarker = await PoseLandmarker.createFromOptions(vision, {
+        baseOptions: {
+          modelAssetBuffer
+        },
+        runningMode: "VIDEO",
+        numPoses: 1,
+        minPoseDetectionConfidence: CONFIG.minPoseDetectionConfidence,
+        minPosePresenceConfidence: CONFIG.minPosePresenceConfidence,
+        minTrackingConfidence: CONFIG.minTrackingConfidence
+      });
+
+      state.modelReady = true;
+      setPill(els.pillModel, `模型已加载: ${file.name}`, "ok");
+      log(`本地 Heavy 模型初始化成功: ${file.name}`);
+      if (state.currentState === "IDLE" && state.cameraReady) {
+        state.currentState = "READY";
+        setStateText();
+      }
+      updateButtons();
+    }
+
+    async function openCamera() {
+      state.videoStream = await navigator.mediaDevices.getUserMedia({
+        video: CONFIG.video,
+        audio: false
+      });
+      els.video.srcObject = state.videoStream;
+      await els.video.play();
+      resizeCanvas();
+      state.cameraReady = true;
+      setPill(els.pillCamera, "摄像头已就绪", "ok");
+      log("摄像头打开成功");
+      if (state.currentState === "IDLE" && state.modelReady) {
+        state.currentState = "READY";
+        setStateText();
+      } else if (state.currentState === "IDLE") {
+        state.currentState = "IDLE";
+        setStateText();
+      }
+      updateButtons();
+      loop();
+    }
+
+    function getSessionMeta() {
+      return {
+        sessionId: state.sessionId,
+        projectId: els.projectId.value.trim(),
+        sampleId: els.sampleId.value.trim(),
+        collectorName: els.collectorName.value.trim(),
+        motionId: els.motionId.value,
+        sampleType: els.sampleType.value,
+        errorType: els.errorType.value.trim(),
+        cameraView: els.cameraView.value,
+        environment: els.environment.value,
+        notes: els.notes.value.trim(),
+        deviceInfo: navigator.userAgent,
+        startedAtIso: new Date().toISOString(),
+        modelType: "pose_landmarker_heavy.task"
+      };
+    }
+
+    function validateFrameRecord(record) {
+      const problems = [];
+      if (!record?.landmarks || record.landmarks.length !== 33) problems.push("landmark_count_invalid");
+      let lowVisibility = 0;
+      for (const lm of record.landmarks || []) {
+        if (typeof lm.x !== "number" || typeof lm.y !== "number" || typeof lm.z !== "number") {
+          problems.push("coordinate_invalid");
+          break;
+        }
+        if (typeof lm.visibility !== "number") problems.push("visibility_invalid");
+        if (typeof lm.presence !== "number") problems.push("presence_invalid");
+        if ((lm.visibility ?? 0) < CONFIG.abnormalVisibilityThreshold) lowVisibility++;
+      }
+      if (lowVisibility > 8) problems.push("many_low_visibility_points");
+      return problems;
+    }
+
+    function mapFrame(result, timestampMs) {
+      const raw = result?.landmarks?.[0] || [];
+      const landmarks = raw.map((lm, idx) => ({
+        name: LANDMARK_NAMES[idx] || `landmark_${idx}`,
+        x: lm.x,
+        y: lm.y,
+        z: lm.z,
+        visibility: typeof lm.visibility === "number" ? lm.visibility : 0,
+        presence: typeof lm.presence === "number" ? lm.presence : 0
+      }));
+
+      return {
+        sessionId: state.sessionId,
+        frameIndex: state.frameIndex,
+        timestampMs,
+        state: state.currentState,
+        landmarks
+      };
+    }
+
+    async function persistFrame(record) {
+      const problems = validateFrameRecord(record);
+      if (problems.length) state.abnormalFrames += 1;
+      await dbAdd(CONFIG.stores.frames, {
+        sessionId: record.sessionId,
+        frameIndex: record.frameIndex,
+        timestampMs: record.timestampMs,
+        state: record.state,
+        abnormalities: problems,
+        landmarks: record.landmarks
+      });
+    }
+
+    function loop() {
+      if (!state.poseLandmarker || !state.cameraReady) return;
+
+      const run = async () => {
+        if (els.video.readyState >= 2 && state.poseLandmarker) {
+          if (els.video.currentTime !== state.lastVideoTime) {
+            state.lastVideoTime = els.video.currentTime;
+
+            const now = performance.now();
+            const result = state.poseLandmarker.detectForVideo(els.video, now);
+            drawSkeleton(result);
+
+            const landmarkCount = result?.landmarks?.[0]?.length || 0;
+            els.statLandmarks.textContent = String(landmarkCount);
+
+            if (state.currentState === "RECORDING" && landmarkCount > 0) {
+              const logicalTimestamp = now - state.sessionStartedAt - state.pauseAccumulatedMs;
+              const record = mapFrame(result, logicalTimestamp);
+              await persistFrame(record);
+              state.frameIndex += 1;
+            }
+
+            state.fpsCounter += 1;
+            if (now - state.lastFpsTick >= 1000) {
+              state.currentFps = state.fpsCounter;
+              state.fpsCounter = 0;
+              state.lastFpsTick = now;
+            }
+          }
+        }
+
+        updateStats();
+        state.rafId = requestAnimationFrame(run);
+      };
+
+      cancelAnimationFrame(state.rafId);
+      state.rafId = requestAnimationFrame(run);
+    }
+
+    async function startSession() {
+      if (!state.modelReady || !state.cameraReady) {
+        alert("模型或摄像头未就绪");
+        return;
+      }
+
+      state.sessionId = uuid();
+      state.sessionStartedAt = performance.now();
+      state.sessionPausedAt = null;
+      state.pauseAccumulatedMs = 0;
+      state.frameIndex = 0;
+      state.abnormalFrames = 0;
+      state.currentState = "RECORDING";
+
+      await dbPut(CONFIG.stores.sessions, {
+        ...getSessionMeta(),
+        sessionId: state.sessionId,
+        status: "RECORDING",
+        createdAt: new Date().toISOString()
+      });
+
+      setStateText();
+      updateButtons();
+      updateStats();
+      log(`开始采集，会话 ${state.sessionId}`);
+    }
+
+    async function pauseSession() {
+      if (state.currentState !== "RECORDING") return;
+      state.sessionPausedAt = performance.now();
+      state.currentState = "PAUSED";
+      setStateText();
+      updateButtons();
+      log("采集已暂停");
+    }
+
+    async function resumeSession() {
+      if (state.currentState !== "PAUSED") return;
+      const now = performance.now();
+      state.pauseAccumulatedMs += now - state.sessionPausedAt;
+      state.sessionPausedAt = null;
+      state.currentState = "RECORDING";
+      setStateText();
+      updateButtons();
+      log("采集已继续");
+    }
+
+    async function stopSession() {
+      if (!state.sessionId) return;
+      state.currentState = "STOPPED";
+      await dbPut(CONFIG.stores.sessions, {
+        ...getSessionMeta(),
+        sessionId: state.sessionId,
+        status: "STOPPED",
+        totalFrames: state.frameIndex,
+        abnormalFrames: state.abnormalFrames,
+        stoppedAt: new Date().toISOString()
+      });
+      setStateText();
+      updateButtons();
+      updateStats();
+      els.statSessions.textContent = String(await dbCountSessions());
+      log(`采集结束，会话 ${state.sessionId}`);
+    }
+
+    function downloadBlob(blob, filename) {
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    }
+
+    function escapeCsv(v) {
+      const s = String(v ?? "");
+      return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    }
+
+    async function exportJsonl() {
+      if (!state.sessionId) return;
+      const frames = await dbGetAllBySession(state.sessionId);
+      frames.sort((a, b) => a.frameIndex - b.frameIndex);
+      const jsonl = frames.map(item => JSON.stringify(item)).join("\n");
+      downloadBlob(new Blob([jsonl], { type: "application/x-ndjson;charset=utf-8" }), `${state.sessionId}.jsonl`);
+      log(`JSONL 导出完成：${state.sessionId}.jsonl`);
+    }
+
+    async function exportCsv() {
+      if (!state.sessionId) return;
+      const frames = await dbGetAllBySession(state.sessionId);
+      frames.sort((a, b) => a.frameIndex - b.frameIndex);
+
+      const headers = ["sessionId", "frameIndex", "timestampMs", "state"];
+      for (const n of LANDMARK_NAMES) {
+        headers.push(`${n}_x`, `${n}_y`, `${n}_z`, `${n}_visibility`, `${n}_presence`);
+      }
+
+      const lines = [headers.join(",")];
+      for (const f of frames) {
+        const base = [escapeCsv(f.sessionId), escapeCsv(f.frameIndex), escapeCsv(f.timestampMs), escapeCsv(f.state)];
+        const byName = Object.fromEntries((f.landmarks || []).map(x => [x.name, x]));
+        for (const n of LANDMARK_NAMES) {
+          const lm = byName[n] || {};
+          base.push(
+            escapeCsv(lm.x ?? ""),
+            escapeCsv(lm.y ?? ""),
+            escapeCsv(lm.z ?? ""),
+            escapeCsv(lm.visibility ?? ""),
+            escapeCsv(lm.presence ?? "")
+          );
+        }
+        lines.push(base.join(","));
+      }
+
+      downloadBlob(new Blob(["\uFEFF" + lines.join("\n")], { type: "text/csv;charset=utf-8" }), `${state.sessionId}.csv`);
+      log(`CSV 导出完成：${state.sessionId}.csv`);
+    }
+
+    function bindEvents() {
+      els.btnInitModel.addEventListener("click", async () => {
+        try {
+          await initModelFromLocalFile();
+        } catch (e) {
+          log(`本地模型初始化失败: ${e.message || e}`, "ERROR");
+          alert(`模型初始化失败：${e.message || e}`);
+        }
+      });
+
+      els.btnCamera.addEventListener("click", async () => {
+        try {
+          await openCamera();
+        } catch (e) {
+          log(`摄像头打开失败: ${e.message || e}`, "ERROR");
+          alert(`摄像头打开失败：${e.message || e}`);
+        }
+      });
+
+      els.btnStart.addEventListener("click", startSession);
+      els.btnPause.addEventListener("click", pauseSession);
+      els.btnResume.addEventListener("click", resumeSession);
+      els.btnStop.addEventListener("click", stopSession);
+      els.btnExportJsonl.addEventListener("click", exportJsonl);
+      els.btnExportCsv.addEventListener("click", exportCsv);
+
+      window.addEventListener("resize", resizeCanvas);
+
+      document.addEventListener("visibilitychange", async () => {
+        if (document.hidden && state.currentState === "RECORDING") {
+          await pauseSession();
+          log("页面切后台，已自动暂停采集", "WARN");
+        }
+      });
+    }
+
+    async function bootstrap() {
+      await initDb();
+      bindEvents();
+      setStateText();
+      updateButtons();
+      updateStats();
+      log("系统初始化完成");
+    }
+
+    bootstrap().catch(err => {
+      log(`系统初始化失败: ${err.message || err}`, "ERROR");
+      alert(`系统初始化失败：${err.message || err}`);
+    });
+  </script>
+</body>
+</html>
